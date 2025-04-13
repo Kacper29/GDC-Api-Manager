@@ -27,11 +27,11 @@ class GdcData:
     def __init__(self):
         pass
 
-    def checkStatus(self):
+    def check_status(self):
         params = {"pretty": True}
         urlFinal = self.urlStatus
-        return requests.get(urlFinal, params=params).text
-
+        response = json.loads(requests.get(urlFinal, params=params).text)
+        return f"GDC API status: {response['status']}"
 
     def mapping(self):
         params = {"pretty": True}
@@ -40,54 +40,13 @@ class GdcData:
         print(json.dumps(json.loads(result.text), indent=4))
 
 
-    def casesByProjectID(self, projectID: str, size: str):
-        urlFinal = self.urlCases
-        fields = {
-            "cases.submitter_id"
-
-        }
-        filters = {
-            "op": "=",
-            "content": {
-                "field": "cases.project.project_id",
-                "value": projectID
-
-            }
-        }
-        params = {
-            "fields": fields,
-            "pretty": True,
-            "filters": json.dumps(filters),
-            "size": size
-
-        }
-        return requests.get(urlFinal, params=params)
-
-    def casesByPrimarySite(self, site: str, size: str):
-        urlFinal = self.urlCases
-        fields = {
-            "cases.submitter_id"
-        }
-        filters = {
-            "op": "in",
-            "content": {
-                "field": "primary_site",
-                "value": site
-
-            }
-        }
-        params = {
-            "fields": fields,
-            "pretty": True,
-            "filters": json.dumps(filters),
-            "size": size
-        }
-        return requests.get(urlFinal, params=params)
 
 
 
 
-    def caseFiles(self, submitterID:str, dataCategory: str, size: str):
+
+
+    def case_files(self, submitterID:str, dataCategory: str, size: str):
         urlFinal = self.urlFiles
         if dataCategory is None:
             filters = {
@@ -128,7 +87,7 @@ class GdcData:
             "size": size
         }
         return requests.post(urlFinal, params=params, headers={"Content-Type": "application/json"})
-    def casesByDisease(self, disease: str, size=10000):
+    def cases_by(self, field, disease: str, size=10000):
         urlFinal = self.urlCases
         fields = {
             "cases.submitter_id"
@@ -136,7 +95,7 @@ class GdcData:
         filters = {
             "op": "in",
             "content": {
-                "field": "disease_type",
+                "field": field,
                 "value": disease
 
             }
@@ -149,14 +108,15 @@ class GdcData:
         }
         return requests.get(urlFinal, params=params)
 
-    def downloadFile(self, fileIDs: list, directory: str, PatientID, data_type: list):
+    def download_file(self, fileIDs: list, directory: str, PatientID, data_type: list):
         os.makedirs(directory, exist_ok=True)
         file_counter = pd.DataFrame()
 
 
         bar_iter = 0
-        for fileID in range(len(fileIDs)-1):
+        for fileID in range(len(fileIDs)):
             try:
+                print(range(len(fileIDs)-1))
                 data_endpt = "https://api.gdc.cancer.gov/data/{}".format(fileIDs[fileID])
                 response = requests.get(data_endpt, headers={"Content-Type": "application/json"})
                 print(response)
@@ -182,17 +142,18 @@ class GdcData:
 
 
 
-    def checkAccess(self, val):
+    def check_access(self, val):
         if val == 'open':
             return True
         else:
             return False
-    def FullFileRequest(self, casesBy, search_parameter:str, file_type:str, size=10000):
+    def full_file_request(self, field, search_parameter:str, file_type:str, size=10000):
         diseaseFile = search_parameter.replace(" ", "_")
         diseasetypeFile = file_type.replace(" ", "_")
         directory = diseaseFile+"/"+diseasetypeFile
         os.makedirs(directory, exist_ok=True)
-        cases = pd.DataFrame.from_dict(casesBy(search_parameter, size).json()['data']['hits'])
+        cases = pd.DataFrame.from_dict(self.cases_by(field, search_parameter, size).json()['data']['hits'])
+        cases.to_csv(directory+"/"+"cases.csv")
         IDlist = cases['submitter_id'].tolist()
 
 
@@ -201,38 +162,41 @@ class GdcData:
         filecount = pd.DataFrame(index=IDlist)
 
         for i in IDlist:
-            file = pd.DataFrame.from_dict(self.caseFiles(i, file_type, 10000).json()['data']['hits'])
+            try:
+                file = pd.DataFrame.from_dict(self.case_files(i, file_type, 10000).json()['data']['hits'])
+                file.to_csv(directory + "/" + "files" + str(i) + ".csv")
 
 
 
-            fileID = file['file_id'].tolist()
-            dataType = file['data_type'].tolist()
-            ifControlled = file['access'].tolist()
-            ifControlled = [self.checkAccess(x) for x in ifControlled]
+                fileID = file['file_id'].tolist()
+                dataType = file['data_type'].tolist()
+                ifControlled = file['access'].tolist()
+                ifControlled = [self.check_access(x) for x in ifControlled]
 
-            to_pop = []
-            for j in range(len(ifControlled)):
+                to_pop = []
+                for j in range(len(ifControlled)):
 
-                if ifControlled[j]:
-                    pass
-                else:
-                    to_pop.append(j)
-            for j in sorted(to_pop, reverse=True):
-                dataType.pop(j)
-                fileID.pop(j)
-            print(ifControlled)
-            print(dataType)
-            for data in dataType:
-                filecount.loc[i, data] = True
+                    if ifControlled[j]:
+                        pass
+                    else:
+                        to_pop.append(j)
+                for j in sorted(to_pop, reverse=True):
+                    dataType.pop(j)
+                    fileID.pop(j)
 
-
-            patients_data_category = {i: {i for i in dataType}}
-            print(patients_data_category)
-
-            file.to_csv(directory +"/"+"files"+ str(i)+".csv")
+                for data in dataType:
+                    filecount.loc[i, data] = True
 
 
-            self.downloadFile(fileID, directory , str(i), dataType)
+                patients_data_category = {i: {i for i in dataType}}
+
+
+
+
+                print(len(fileID))
+                self.download_file(fileID, directory, str(i), dataType)
+            except:
+                print("Submitter id not valid")
 
 
             # PatientID += 1
@@ -240,7 +204,6 @@ class GdcData:
 
 
         filecount.to_csv(directory+"/testyzliczania.csv")
-
 
 
 
